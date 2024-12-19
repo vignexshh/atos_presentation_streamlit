@@ -1,17 +1,5 @@
 import streamlit as st
-from llama_index.llms.groq import Groq
-from langchain_community.document_loaders import PyPDFLoader
-from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain.chains.summarize import load_summarize_chain
-from langchain_groq import ChatGroq
-from langchain.schema import Document
-import base64
-import markdown2
-import tempfile
-import os
-
-
-import streamlit as st
+import time
 from llama_index.llms.groq import Groq
 from langchain_community.document_loaders import PyPDFLoader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
@@ -29,9 +17,7 @@ def get_download_link(content, filename, format):
     return f'<a href="data:file/{format};base64,{b64}" download="{filename}">Download {format.upper()} File</a>'
 
 def render_marp_markdown(markdown_content, header_image_data=None):
-    """
-    Custom Marp-like rendering for Streamlit with header image and footer
-    """
+    """Custom Marp-like rendering for Streamlit with header image and footer"""
     # Convert image data to base64 if provided
     header_image_b64 = ""
     if header_image_data is not None:
@@ -208,123 +194,139 @@ def render_marp_markdown(markdown_content, header_image_data=None):
     return full_html
 
 class PresentationGenerator:
-    def __init__(self, llm, topic, slide_count, pdf_text=None):
+    def __init__(self, llm, topic, slide_count, pdf_text=None, batch_size=2):
         self.llm = llm
         self.topic = topic
         self.slide_count = slide_count
         self.pdf_text = pdf_text
-        self.outline = None
-        self.slides = None
+        self.slide_outline = None
+        self.final_presentation = None
+        self.batch_size = batch_size
+        self.pdf_summary = None
 
     def process_pdf_content(self):
-        """Generate outline from PDF content using LangChain"""
+        """Process PDF content and generate a summary using LangChain"""
         if not self.pdf_text:
             return None
             
-        # Initialize LangChain components
         text_splitter = RecursiveCharacterTextSplitter(
             chunk_size=1000,
             chunk_overlap=100
         )
-        
-        # Create document chunks
         chunks = text_splitter.create_documents([self.pdf_text])
         
-        # Create LangChain chat model
         chat_model = ChatGroq(
             temperature=0.5,
             groq_api_key=st.secrets["GROQ_API_KEY"],
             model_name="llama-3.3-70b-versatile"
         )
         
-        # Load summarization chain
         chain = load_summarize_chain(
             llm=chat_model,
             chain_type="map_reduce",
             verbose=False
         )
         
-        # Generate summary from PDF content
-        summary = chain.run(chunks)
-        return summary
+        self.pdf_summary = chain.run(chunks)
+        return self.pdf_summary
 
-    def generate_outline(self):
-        """Generate a comprehensive outline for the topic"""
-        pdf_summary = self.process_pdf_content() if self.pdf_text else None
+    def generate_slide_outline(self):
+        """Generate a structured outline of slide titles"""
+        if self.pdf_text and not self.pdf_summary:
+            self.process_pdf_content()
         
-        outline_prompt = f"""Create a detailed outline for a presentation on '{self.topic}' with {self.slide_count} distinct sections.
-        {f'Using this document as reference: {pdf_summary}' if pdf_summary else ''}
+        outline_prompt = f"""Create exactly {self.slide_count} slide titles for a presentation on '{self.topic}'.
+        {f'Using this summary as reference: {self.pdf_summary}' if self.pdf_summary else ''}
         
         Requirements:
-        1. Each section should cover a unique aspect of {self.topic}
-        2. Sections should flow logically from introduction to conclusion
-        3. Focus on key concepts, practical applications, and important insights
-        4. Do not include presentation instructions or slide formatting notes
-        5. Do not repeat content across sections"""
+        1. First slide must be an introduction
+        2. Last slide should be a conclusion or summary
+        3. Titles should be concise (4-6 words maximum)
+        4. Each title should represent a distinct aspect or concept
+        5. Arrange titles in a logical learning sequence
         
+        Format:
+        Return only the slide titles, one per line, without numbers or additional text."""
+
         response = self.llm.complete(outline_prompt)
-        self.outline = str(response).strip()
-        return self.outline
+        self.slide_outline = [title.strip() for title in str(response).strip().split('\n') if title.strip()]
+        return self.slide_outline
 
-    def divide_outline_into_slides(self):
-        """Divide the outline into sections for specified number of slides"""
-        divide_prompt = f"""Transform this outline into {self.slide_count} distinct slides about {self.topic}:
-
-        {self.outline}
-
-        Requirements:
-        1. Each slide should focus on a single main concept
-        2. Maintain logical flow between slides
-        3. Create concise, clear titles
-        4. Do not include any formatting instructions
-        5. Do not repeat content between slides
-        6. Do not number or label slides as 'Slide X'"""
+    def generate_slide_content(self, slide_title, slide_number):
+        """Generate content for a specific slide"""
+        is_first_slide = slide_number == 1
+        is_last_slide = slide_number == self.slide_count
         
-        response = self.llm.complete(divide_prompt)
-        self.slides = str(response).strip().split('\n')
-        return self.slides
+        # Use summarized PDF content instead of full text
+        pdf_context = f"Based on the summary: {self.pdf_summary}\n" if self.pdf_summary else ""
 
-    def generate_slide_content(self):
-        """Generate MARP-formatted slide content"""
-        final_slides = []
-        
-        for i, slide_topic in enumerate(self.slides, 1):
-            content_prompt = f"""Create content for a slide about: {slide_topic}
-
+        if is_first_slide:
+            content_prompt = f"""{pdf_context}Create brief introductory content for the first slide titled '{slide_title}' about {self.topic}.
+            
             Requirements:
-            1. Include 2-3 key points with `##` that directly relate to {slide_topic}
-            2. Each point should be clear and informative
-            3. Avoid repetition from other slides
-            4. Do not include formatting instructions or slide numbers
-            5. Do not include phrases like 'Key Points:' or 'Features:'
-            6. Focus only on meaningful content"""
-            
-            response = self.llm.complete(content_prompt)
-            slide_content = str(response).strip()
-            
-            # Clean up common formatting issues
-            slide_content = (slide_content
-                           .replace('Key Points:', '')
-                           .replace('Features:', '')
-                           .replace('* Title:', '')
-                           .replace('* Text:', '')
-                           .strip())
-            
-            formatted_slide = f"---\n\n# {slide_topic}\n\n{slide_content}\n\n"
-            final_slides.append(formatted_slide)
-        
-        return final_slides
+            1. Maximum 3 bullet points
+            2. Each point should be one line only
+            3. Begin each point with '* '
+            4. Focus on what will be covered
+            5. No introductory phrases or labels
+            6. No empty lines between points"""
 
-    def generate_presentation(self):
-        """Generate complete presentation"""
+        elif is_last_slide:
+            content_prompt = f"""{pdf_context}Create conclusion content for the final slide titled '{slide_title}' about {self.topic}.
+            
+            Requirements:
+            1. Maximum 3 bullet points
+            2. Each point should be one line only
+            3. Begin each point with '* '
+            4. Summarize key takeaways
+            5. No concluding phrases or labels
+            6. No empty lines between points"""
+
+        else:
+            content_prompt = f"""{pdf_context}Create content for slide titled '{slide_title}' about {self.topic}.
+            
+            Requirements:
+            1. Maximum 3 bullet points
+            2. Each point should be one line only
+            3. Begin each point with '* '
+            4. Focus on key concepts related to {slide_title}
+            5. No introductory phrases or labels
+            6. No empty lines between points"""
+
+        response = self.llm.complete(content_prompt)
+        return str(response).strip()
+
+    def generate_presentation(self, status_callback=None):
+        """Generate the complete presentation in batches"""
+        # Generate slide outline first if not already generated
+        if not self.slide_outline:
+            self.generate_slide_outline()
+        
+        # Prepare MARP header
         marp_header = "---\nmarp: true\ntheme: default\nsize: 16:9\npaginate: true\n---\n\n"
-        title_slide = f"---\n\n# {self.topic}\n\n"
         
-        self.generate_outline()
-        self.divide_outline_into_slides()
-        slides = self.generate_slide_content()
+        # Generate content for slides in batches
+        slides = []
+        total_batches = (len(self.slide_outline) + self.batch_size - 1) // self.batch_size
         
-        return marp_header + title_slide + ''.join(slides)
+        for batch_idx in range(0, len(self.slide_outline), self.batch_size):
+            batch_titles = self.slide_outline[batch_idx:batch_idx + self.batch_size]
+            
+            if status_callback:
+                current_batch = (batch_idx // self.batch_size) + 1
+                status_callback(f"Generating content for slides {batch_idx + 1}-{min(batch_idx + self.batch_size, len(self.slide_outline))} (Batch {current_batch}/{total_batches})")
+            
+            for i, title in enumerate(batch_titles, batch_idx + 1):
+                content = self.generate_slide_content(title, i)
+                slide = f"---\n\n# {title}\n\n{content}\n\n"
+                slides.append(slide)
+            
+            # Add delay between batches to avoid rate limits
+            if batch_idx + self.batch_size < len(self.slide_outline):
+                time.sleep(2)  # 2 second delay between batches
+        
+        self.final_presentation = marp_header + ''.join(slides)
+        return self.final_presentation
 
 def main():
     st.title("EPG Agent")
@@ -351,7 +353,6 @@ def main():
                 tmp_file.write(pdf_file.getvalue())
                 tmp_file_path = tmp_file.name
             
-            # Load PDF content
             loader = PyPDFLoader(tmp_file_path)
             pages = loader.load_and_split()
             pdf_text = "\n".join([page.page_content for page in pages])
@@ -370,23 +371,50 @@ def main():
             api_key=st.secrets["GROQ_API_KEY"]
         )
         
-        with st.spinner("Generating presentation..."):
+        with st.status("Working on Presentation") as status:
+            st.write("Generating slide outline...")
             generator = PresentationGenerator(
                 llm=llm,
                 topic=topic,
                 slide_count=slide_count,
-                pdf_text=pdf_text
+                pdf_text=pdf_text,
+                batch_size=2  # Process 2 slides at a time
             )
+            # Show outline first
+            outline = generator.generate_slide_outline()
+            st.write("Generated outline:")
+            for i, title in enumerate(outline, 1):
+                st.write(f"{i}. {title}")
+
+            # Create a progress placeholder
+            progress_placeholder = st.empty()
+            
+            # Generate presentation with status updates
+            def update_status(message):
+                progress_placeholder.write(message)
+            
+            presentation = generator.generate_presentation(status_callback=update_status)
+            
+            status.update(label="Presentation complete!", state="complete")
+            progress_placeholder.empty() 
+            
+            st.write("Generating slide content...")
             presentation = generator.generate_presentation()
+            
+            st.write("Applying formatting...")
+            status.update(label="Presentation complete!", state="complete")
         
         # Display and download options
         st.markdown("### Generated Presentation")
-        st.code(presentation)
+        
+        # Add expander for markdown content
+        with st.expander("View Markdown Content", expanded=False):
+            st.code(presentation)
         
         rendered_html = render_marp_markdown(presentation, header_image_data)
         # Replace footer text placeholder
         rendered_html = rendered_html.replace("{footer_text}", footer_text)
-        st.components.v1.html(rendered_html, height=700, scrolling=True)
+        st.components.v1.html(rendered_html, height=800, scrolling=True)
         
         st.markdown("### Download Options")
         md_download_link = get_download_link(presentation, f"{filename}.md", "markdown")
