@@ -161,7 +161,7 @@ def render_marp_markdown(markdown_content, header_image_data=None):
             """
             rendered_slides.append(slide_html)
     
-    # Add navigation script
+    #   navigation script
     navigation_script = """
     <script>
     function scrollSlides(direction) {
