@@ -11,6 +11,14 @@ import markdown2
 import tempfile
 import os
 
+
+st.set_page_config(
+    page_title="ATOS Presentation",  
+    page_icon=":star:",        
+    layout="wide",               
+    initial_sidebar_state="auto" 
+)
+
 def get_download_link(content, filename, format):
     """Generate download link for file"""
     b64 = base64.b64encode(content.encode()).decode()
@@ -18,7 +26,7 @@ def get_download_link(content, filename, format):
 
 def render_marp_markdown(markdown_content, header_image_data=None):
     """Custom Marp-like rendering for Streamlit with header image and footer"""
-    # Convert image data to base64 if provided
+  
     header_image_b64 = ""
     if header_image_data is not None:
         header_image_b64 = base64.b64encode(header_image_data).decode()
@@ -74,7 +82,7 @@ def render_marp_markdown(markdown_content, header_image_data=None):
         flex-grow: 1;
     }
     .slide-footer {
-        height: 5px;
+        height: 30px;
         background-color: #4f46e5;
         width: 100%;
         position: relative;
@@ -130,23 +138,22 @@ def render_marp_markdown(markdown_content, header_image_data=None):
     </style>
     """
     
-    # Split slides
+   
     slides = markdown_content.split('---')[2:]  # Skip MARP header
     
-    # Process each slide
+  
     rendered_slides = []
     for i, slide in enumerate(slides, 1):
         if slide.strip():
-            # Convert markdown to HTML
+          
             html_content = markdown2.markdown(slide.strip())
             
-            # Create header image HTML based on whether an image was provided
+        
             header_html = """<div class="slide-header">"""
             if header_image_b64:
                 header_html += f"""<img src="data:image/png;base64,{header_image_b64}" alt="Header Image">"""
             header_html += "</div>"
-            
-            # Wrap in slide div with header image and footer
+   
             slide_html = f"""
             <div class="marp-slide">
                 {header_html}
@@ -321,20 +328,20 @@ class PresentationGenerator:
                 slide = f"---\n\n# {title}\n\n{content}\n\n"
                 slides.append(slide)
             
-            # Add delay between batches to avoid rate limits
+            # delays between batches
             if batch_idx + self.batch_size < len(self.slide_outline):
-                time.sleep(2)  # 2 second delay between batches
+                time.sleep(2)   
         
         self.final_presentation = marp_header + ''.join(slides)
-        return self.final_presentation
+        return self.final_presentation  
 
 def main():
-    st.title("EPG Agent")
+    st.sidebar.title("ATOS Presentation Agent")
     
     # Sidebar inputs
-    st.sidebar.header("Presentation Settings")
+    # st.sidebar.header("Presentation Settings")
     topic = st.sidebar.text_input("Presentation Topic", "Brief Introduction to concepts of map reduce")
-    slide_count = st.sidebar.number_input("Number of Slides", min_value=5, max_value=10, value=5)
+    slide_count = st.sidebar.number_input("Estimated Number of Slides", min_value=5, max_value=10, value=5)
     
     # File uploader for header image
     header_image_file = st.sidebar.file_uploader("Upload Header Image", type=['png', 'jpg', 'jpeg'])
@@ -342,7 +349,7 @@ def main():
     if header_image_file is not None:
         header_image_data = header_image_file.read()
     
-    footer_text = st.sidebar.text_input("Footer Text", "Your Company Name")
+    footer_text = st.sidebar.text_input("Footer Text", "Your College Name")
     
     # PDF upload option
     pdf_file = st.sidebar.file_uploader("Upload PDF for Content (Optional)", type=['pdf'])
@@ -380,16 +387,15 @@ def main():
                 pdf_text=pdf_text,
                 batch_size=2  # Process 2 slides at a time
             )
-            # Show outline first
+ 
             outline = generator.generate_slide_outline()
             st.write("Generated outline:")
             for i, title in enumerate(outline, 1):
                 st.write(f"{i}. {title}")
 
-            # Create a progress placeholder
+  
             progress_placeholder = st.empty()
-            
-            # Generate presentation with status updates
+       
             def update_status(message):
                 progress_placeholder.write(message)
             
@@ -404,15 +410,14 @@ def main():
             st.write("Applying formatting...")
             status.update(label="Presentation complete!", state="complete")
         
-        # Display and download options
+ 
         st.markdown("### Generated Presentation")
-        
-        # Add expander for markdown content
+ 
         with st.expander("View Markdown Content", expanded=False):
             st.code(presentation)
         
         rendered_html = render_marp_markdown(presentation, header_image_data)
-        # Replace footer text placeholder
+ 
         rendered_html = rendered_html.replace("{footer_text}", footer_text)
         st.components.v1.html(rendered_html, height=800, scrolling=True)
         
