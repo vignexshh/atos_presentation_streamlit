@@ -1,9 +1,0 @@
-[theme]
-base = "light"
-
-[ui]
-# Always use wide mode
-wideMode = true
-
-
- 
